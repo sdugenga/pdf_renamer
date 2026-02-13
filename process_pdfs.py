@@ -1,3 +1,4 @@
+import argparse
 import re
 import unicodedata
 from pathlib import Path
@@ -5,26 +6,51 @@ from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 
 def main():
-    # TODO file picking and argument passing here
-    # To get to the stage of single file or whole folder
-    
-    # There will be logic for passing args etc. and then:
-    path = Path("samples/test.pdf")
-    input_dir = False # For now
-    output_dir = Path("samples/processed")
-    # Create the folder if it doesn't exist
-    output_dir.mkdir(exist_ok=True)
+    # parse command line arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'files',
+        nargs='+',
+        type=Path,
+        help='PDF file(s) to process'
+    )
+    parser.add_argument(
+        '--output', '-o',
+        type=Path,
+        default=None
+    )
 
-    # make sure it exists
-    if not path.exists():
-        print("File not found")
+    args = parser.parse_args()
+
+    pdf_files = expand_input_paths(args.files)
+
+    if not pdf_files:
+        print("No PDF files found.")
         return
+    
+    if args.output:
+        output_dir = args.output
+    else:
+        output_dir = pdf_files[0].parent / 'processed_pdfs'
 
-    # If it's a single file
-    process_single_pdf(path, output_dir)
+    output_dir.mkdir(exist_ok=True)
+    
+    # process each file
+    success_count = 0
+    for pdf_file in pdf_files:
+        if not pdf_file.exists():
+            print(f"File not found: {pdf_file}")
+            continue
 
-    # If it's a whole folder
-    # process_folder(input_dir, output_dir)
+        print(f"Processing: {pdf_file.name}")
+        try:
+            process_single_pdf(pdf_file, output_dir)
+            success_count += 1
+        except Exception as e:
+            print(f"Error processing {pdf_file.name}: {e}")
+
+    print(f"\n{'='*50}")
+    print(f"Completed: {success_count}/{len(pdf_files)} files processed")
 
 
 def process_single_pdf(pdf_path, output_dir):
@@ -48,9 +74,26 @@ def process_single_pdf(pdf_path, output_dir):
     save_pdf_with_metadata(reader, output_path, doc_title)
 
 
-# TODO
-def process_folder():
-    pass
+def expand_input_paths(paths):
+    expanded_files = []
+    
+    for path in paths:
+        path_str = str(path)
+        # if it's an existing file
+        if path.is_file():
+            expanded_files.append(path)
+        # if it's an existing directory
+        if path.is_dir():
+            expanded_files.extend(path.glob("*.pdf"))
+        # otherwise treat it as a glob pattern
+        else:
+            matches = list(Path().glob(path_str))
+            if matches:
+                expanded_files.extend(matches)
+            else:
+                print(f"No matches found for: {path}")
+    
+    return expanded_files
 
 
 def extract_note_and_level(text):
