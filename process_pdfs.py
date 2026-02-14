@@ -36,42 +36,87 @@ def main():
     output_dir.mkdir(exist_ok=True)
     
     # process each file
+    failed_files = []
     success_count = 0
     for pdf_file in pdf_files:
         if not pdf_file.exists():
             print(f"File not found: {pdf_file}")
             continue
-
         print(f"Processing: {pdf_file.name}")
         try:
             process_single_pdf(pdf_file, output_dir)
             success_count += 1
         except Exception as e:
-            print(f"Error processing {pdf_file.name}: {e}")
+            failed_files.append((pdf_file, str(e)))
 
     print(f"\n{'='*50}")
     print(f"Completed: {success_count}/{len(pdf_files)} files processed")
+
+    if failed_files:
+        print(f"\nFailed files:")
+        for file, error in failed_files:
+            print(f"{file}: {error}")
 
 
 def process_single_pdf(pdf_path, output_dir):
     # Open the pdf
     reader = PdfReader(pdf_path)
-    # Point to the first page
-    first_page = reader.pages[0]
-    # Extract the text
-    text = first_page.extract_text()
+    
+    try:
+        # Point to the first page
+        first_page = reader.pages[0]
+        # Extract the text
+        text = first_page.extract_text()
+    except Exception:
+        raise RuntimeError("Failed while extracting text from PDF")
 
-    note_num, level_num = extract_note_and_level(text)
+    try:
+        note_num, level_num = extract_note_and_level(text)
+    except Exception as e:
+        print(f"    Could not extract note/level: {e}")
+        note_num, level_num = None, None
 
-    title = extract_title(first_page)
+    try:
+        title = extract_title(first_page)
+    except Exception as e:
+        print(f"  Could not extract title: {e}")
+        title = None
 
-    filename = generate_filename(note_num, level_num, title)
+    if not note_num or not level_num or not title:
+        note_num, level_num, title = get_manual_input(pdf_path)
 
-    doc_title = generate_doc_title(note_num, level_num, title)
+        if not note_num:
+            return False
 
-    output_path = output_dir / filename
+    try:
+        filename = generate_filename(note_num, level_num, title)
+        doc_title = generate_doc_title(note_num, level_num, title)
+        output_path = output_dir / filename
+        save_pdf_with_metadata(reader, output_path, doc_title)
+    except Exception:
+        raise RuntimeError("Failed while generating or saving output PDF")
 
-    save_pdf_with_metadata(reader, output_path, doc_title)
+
+def get_manual_input(pdf_path):
+    print(f"\n{'='*50}")
+    print(f"Could not auto-extract from: {pdf_path.name}")
+    print(f"{'='*50}")
+    
+    response = input("Enter values manually? (y/n): ").strip().lower()
+    
+    if response != 'y':
+        print("Skipping file...")
+        return None, None, None
+    
+    note_num = input("Note number: ").strip()
+    level_num = input("Level number: ").strip()
+    title = input("Title: ").strip()
+    
+    if not note_num or not level_num or not title:
+        print("Invalid input. Skipping file...")
+        return None, None, None
+    
+    return note_num, level_num, title
 
 
 def expand_input_paths(paths):
@@ -86,19 +131,34 @@ def expand_input_paths(paths):
         if path.is_dir():
             expanded_files.extend(path.glob("*.pdf"))
         # otherwise treat it as a glob pattern
-        else:
-            matches = list(Path().glob(path_str))
+        elif '*' in path_str or '?' in path_str:
+            # It's a glob pattern
+            # Split into parent directory and pattern
+            parent = path.parent
+            pattern = path.name
+            
+            # If parent doesn't exist, try from current directory
+            if not parent.exists():
+                parent = Path('.')
+            
+            matches = list(parent.glob(pattern))
             if matches:
                 expanded_files.extend(matches)
             else:
                 print(f"No matches found for: {path}")
+        
+        else:
+            # Path doesn't exist and isn't a pattern
+            print(f"Warning: {path} not found (skipping)")
     
     return expanded_files
 
 
 def extract_note_and_level(text):
     # search for the note number and level
-    note_num_level = re.search(r"[Nn]ote (\d\d?) [Ll]evel (\d\d?)", text)
+    note_num_level = re.search(r"[Nn]ote\s+(\d\d?)\s+[Ll]evel\s+(\d\d?)", text)
+    if not note_num_level:
+        raise RuntimeError("Could not find 'Note X Level Y' pattern")
     # assign the numbers to variables and strip any whitespace
     note_num, level_num = note_num_level.group(1, 2)
     note_num = note_num.strip()
